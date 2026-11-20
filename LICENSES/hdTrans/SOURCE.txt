@@ -1,0 +1,31 @@
+Product: hdTrans (하드트랜스)
+Bundled Version: 0.9.5
+Release Tag: v0.9.5 (tag object 870004425b9c76d3042a014739f9fcd4f2e201a3)
+Source Commit: acd67a792a99ac5da3d6622d4d3dd203e957acd1 (chore(main): release 0.9.5, 2026-11-09 00:11:48 +0000)
+Dictionary Build Version (hdtrans-data/dicts.txt): 0.9.5+ec1346c72426
+License: AGPL-3.0-only (GNU Affero General Public License v3.0 only)
+
+Upstream Repository: https://github.com/sokcuri/hdTrans
+Official Windows Release Archive: https://github.com/sokcuri/hdTrans/releases/download/v0.9.5/hdTrans-0.9.5-windows.zip
+Official Release Archive Bytes: 36674315
+Official Release Archive SHA-256: acdd19248a362fb8b84476c70470526e3aa41f08547527bc02fa72a3f54b9472
+Upstream Source Archive URL: https://github.com/sokcuri/hdTrans/archive/refs/tags/v0.9.5.zip
+Upstream Source Archive Bytes: 29993195
+Upstream Source Archive SHA-256: 7ad4d06d0acc245b4687e53669e32c20b10a9d4a4d2a168615831da6d011e1de
+
+Extracted Bundled Binary & Dictionary Hashes (SHA-256):
+- scripts/AigisKR/hdtrans/J2KEngine.dll (7114752 bytes):
+  e2bef2ee016e3e508f6b5607d15fd8e30d23e4009acbfaebaf0b540cc3581e35
+- scripts/AigisKR/hdtrans/hdtrans-data/dicts.hdsnap (36904899 bytes):
+  46111a76bf352452b81543e96aca84242fec4834cd422920ccb90e9512fe749c
+- scripts/AigisKR/hdtrans/hdtrans-data/dicts.txt (19 bytes):
+  d88c9b3952c486eb3b93597d9de8d304be7003f820c48dd3a628a5f37a47b42a
+- scripts/AigisKR/hdtrans/LICENSE (34523 bytes):
+  0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0
+- scripts/AigisKR/hdtrans/NOTICE (375 bytes):
+  4825433c16f86e366900d62ea4463cd63478accbced52310086fcf318751566a
+- scripts/AigisKR/hdtrans/THIRD-PARTY-NOTICES.txt (15823 bytes):
+  89b623e11a33711d0ccc65e9a368e6bdd286629ae9140b988937a74f773dbcf4
+
+Corresponding Source Availability:
+Complete corresponding source code for AigisKR.HdTransHost (tools/hdtrans_host/) and the pinned upstream hdTrans v0.9.5 snapshot (commit acd67a792a99ac5da3d6622d4d3dd203e957acd1), together with CMake build instructions and license files, is bundled in the companion release archive AigisKR-0.1.0-rc.2-sources.zip.
