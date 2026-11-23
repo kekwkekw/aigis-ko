@@ -83,8 +83,10 @@ HdTransPath=
 
 ## 라이선스와 대응 소스
 
+Copyright (c) 2026 kekwkekw. 이 저장소의 자체 코드·도구·독자 작성 번역 데이터는 **AGPL-3.0-only**로 제공합니다. [LICENSE](LICENSE)를 참고하세요. 게임 원문·고유 명칭 및 가공 UI 이미지의 원작 권리는 각 게임 권리자에게 있으며, 이 저장소의 오픈소스 라이선스로 재허가하지 않습니다.
+
 동반 배포한 **`AigisKR-0.1.0-sources.zip`**에는 번들 hdTrans와 별도 번역 호스트의 대응 소스 및 빌드 안내가 있습니다. 이 소스 ZIP은 게임 설치용 파일이 아닙니다.
 
-`hdTrans`와 `AigisKR.HdTransHost`는 AGPL-3.0-only 구성 요소입니다. 라이선스·고지·출처는 `LICENSES/` 및 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)에 있습니다. 폰트 파일은 배포하지 않으며 실행 시 Windows 시스템 폰트를 사용합니다.
+`hdTrans`와 `AigisKR.HdTransHost`는 AGPL-3.0-only 구성 요소이며, 그 밖의 외부 구성요소는 각각의 고유 라이선스를 따릅니다. 라이선스·고지·출처는 `LICENSES/` 및 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)에 있습니다. 폰트 파일은 배포하지 않으며 실행 시 Windows 시스템 폰트를 사용합니다.
 
 패키지 버전은 **v0.1.0**입니다. rc.11에서 검증한 바이너리를 보존했으므로 진단 로그의 내부 구성 요소 버전은 ASI `0.1.0-rc.9`, 번역 호스트 `0.1.0-rc.2`로 표시될 수 있습니다.
