@@ -1,0 +1,13 @@
+build*/
+_deps/
+*.obj
+*.pdb
+*.lib
+*.exp
+*.ilk
+*.tlog
+*.log
+__pycache__/
+*.pyc
+dist/
+*.zip

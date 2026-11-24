@@ -1,0 +1,1890 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 11d86de..15dcc9d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -79,6 +79,8 @@ set(SOURCES
+     src/HookTimings.cpp
+     src/TextureHash.cpp
+     src/DDSLoader.cpp
++    src/RoleManifest.cpp
++    src/PartialPatch.cpp
+     ${MINHOOK_SOURCES}
+     ${IMGUI_SOURCES}
+ )
+@@ -106,7 +108,7 @@ target_compile_definitions(TextureToolkit PRIVATE
+     ImTextureID=ImU64
+ )
+ 
+-target_link_libraries(TextureToolkit PRIVATE Shlwapi d3d9 d3d11 dxgi Psapi Version)
++target_link_libraries(TextureToolkit PRIVATE Shlwapi d3d9 d3d11 dxgi Psapi Version windowscodecs ole32)
+ 
+ # Headless preview of the overlay panel: renders the real draw_ui() against the real TextureManager
+ # on an offscreen D3D11 device and writes a PNG. A development tool for working on the UI without
+diff --git a/src/Config.cpp b/src/Config.cpp
+index e06c9ba..0d8c4ab 100644
+--- a/src/Config.cpp
++++ b/src/Config.cpp
+@@ -129,9 +129,16 @@ namespace TextureToolkit
+         if (m_config.resource_root.empty())
+             m_config.resource_root = "TT"; // an empty root would scatter dump/inject into the game folder
+ 
++        {
++            std::vector<wchar_t> man_str(32768, L'\0');
++            GetPrivateProfileStringW(L"TextureToolkit", L"RoleManifest", L"", man_str.data(), static_cast<DWORD>(man_str.size()), ini_w);
++            m_config.role_manifest_path = man_str.data();
++        }
++
+         // Toggles
+         m_config.enable_injection = GetPrivateProfileIntW(L"TextureToolkit", L"EnableInjection", 1, ini_w) != 0;
+         m_config.auto_dump = GetPrivateProfileIntW(L"TextureToolkit", L"AutoDump", 0, ini_w) != 0;
++        m_config.production_mode = GetPrivateProfileIntW(L"TextureToolkit", L"ProductionMode", 1, ini_w) != 0;
+         m_config.filter_small_textures = GetPrivateProfileIntW(L"TextureToolkit", L"FilterSmallTextures", 1, ini_w) != 0;
+         m_config.show_current_frame_only = GetPrivateProfileIntW(L"TextureToolkit", L"ShowCurrentFrameOnly", 1, ini_w) != 0;
+         m_config.accept_sk_names = GetPrivateProfileIntW(L"TextureToolkit", L"AcceptSpecialKNames", 1, ini_w) != 0;
+@@ -184,6 +191,7 @@ namespace TextureToolkit
+                            " ResourceRoot=" + path_utf8(m_config.resource_root) +
+                            " EnableInjection=" + (m_config.enable_injection ? "1" : "0") +
+                            " AutoDump=" + (m_config.auto_dump ? "1" : "0") +
++                           " ProductionMode=" + (m_config.production_mode ? "1" : "0") +
+                            " FilterSmallTextures=" + (m_config.filter_small_textures ? "1" : "0") +
+                            " ShowCurrentFrameOnly=" + (m_config.show_current_frame_only ? "1" : "0") +
+                            " AcceptSpecialKNames=" + (m_config.accept_sk_names ? "1" : "0") +
+@@ -209,6 +217,7 @@ namespace TextureToolkit
+         Logger::get().info("[ConfigManager] Configuration saved to " + path_utf8(m_ini_path));
+         Logger::get().info(std::string("[ConfigManager] Now: EnableInjection=") + (m_config.enable_injection ? "1" : "0") +
+                            " AutoDump=" + (m_config.auto_dump ? "1" : "0") +
++                           " ProductionMode=" + (m_config.production_mode ? "1" : "0") +
+                            " FilterSmallTextures=" + (m_config.filter_small_textures ? "1" : "0") +
+                            " ShowCurrentFrameOnly=" + (m_config.show_current_frame_only ? "1" : "0") +
+                            " AcceptSpecialKNames=" + (m_config.accept_sk_names ? "1" : "0") +
+@@ -233,6 +242,7 @@ namespace TextureToolkit
+ 
+         put(L"TextureToolkit", L"EnableInjection", flag(m_config.enable_injection));
+         put(L"TextureToolkit", L"AutoDump", flag(m_config.auto_dump));
++        put(L"TextureToolkit", L"ProductionMode", flag(m_config.production_mode));
+         put(L"TextureToolkit", L"FilterSmallTextures", flag(m_config.filter_small_textures));
+         put(L"TextureToolkit", L"ShowCurrentFrameOnly", flag(m_config.show_current_frame_only));
+         put(L"TextureToolkit", L"AcceptSpecialKNames", flag(m_config.accept_sk_names));
+@@ -245,6 +255,8 @@ namespace TextureToolkit
+             put(L"TextureToolkit", L"UIScale", scale_buf);
+         }
+         put(L"TextureToolkit", L"Verbose", flag(m_config.verbose));
++        if (!m_config.role_manifest_path.empty())
++            put(L"TextureToolkit", L"RoleManifest", m_config.role_manifest_path.wstring());
+ 
+         std::wstring order;
+         for (size_t i = 0; i < m_config.mod_load_order.size(); ++i)
+@@ -270,6 +282,7 @@ namespace TextureToolkit
+            << L"; Feature Toggles\r\n"
+            << L"EnableInjection=" << (m_config.enable_injection ? 1 : 0) << L"\r\n"
+            << L"AutoDump=" << (m_config.auto_dump ? 1 : 0) << L"\r\n"
++           << L"ProductionMode=" << (m_config.production_mode ? 1 : 0) << L"\r\n"
+            << L"FilterSmallTextures=" << (m_config.filter_small_textures ? 1 : 0) << L"\r\n"
+            << L"ShowCurrentFrameOnly=" << (m_config.show_current_frame_only ? 1 : 0) << L"\r\n\r\n"
+            << L"; Also load texture packs named the way Special K names them (CRC-32C of the top mip)\r\n"
+diff --git a/src/Config.h b/src/Config.h
+index 4152744..485bd2e 100644
+--- a/src/Config.h
++++ b/src/Config.h
+@@ -43,8 +43,12 @@ namespace TextureToolkit
+         // this one value and everything moves together.
+         std::filesystem::path resource_root = "TT";
+ 
++        // Optional R2 role-based manifest path (relative to executable folder, or empty = <ResourceRoot>/texture_manifest_r2.json).
++        std::filesystem::path role_manifest_path;
++
+         bool enable_injection = true;
+         bool auto_dump = false;
++        bool production_mode = true;
+         bool filter_small_textures = true;
+         bool show_current_frame_only = true;
+ 
+diff --git a/src/D3D11Hook.cpp b/src/D3D11Hook.cpp
+index 42ec018..f86bcb0 100644
+--- a/src/D3D11Hook.cpp
++++ b/src/D3D11Hook.cpp
+@@ -548,8 +548,8 @@ namespace TextureToolkit
+         {
+             if (pInitialData != nullptr && pInitialData->pSysMem != nullptr && pDesc->MipLevels > 0)
+             {
+-                // Only track static shader resource textures
+-                if (pDesc->Usage == D3D11_USAGE_DEFAULT || pDesc->Usage == D3D11_USAGE_IMMUTABLE)
++                // Track shader resource textures initialized upfront (AquaLead creates static UI atlases as DYNAMIC+InitialData)
++                if (pDesc->Usage == D3D11_USAGE_DEFAULT || pDesc->Usage == D3D11_USAGE_IMMUTABLE || pDesc->Usage == D3D11_USAGE_DYNAMIC)
+                 {
+                     if (pDesc->BindFlags & D3D11_BIND_SHADER_RESOURCE)
+                     {
+@@ -1209,6 +1209,15 @@ namespace TextureToolkit
+             if (dim != D3D11_RESOURCE_DIMENSION_TEXTURE2D)
+                 return hr;
+ 
++            D3D11_TEXTURE2D_DESC map_desc = {};
++            if (TextureManager::get().is_production_skip_mode() &&
++                texture2d_desc(pResource, map_desc) &&
++                !TextureManager::get().should_process_texture_upload(map_desc.Width, map_desc.Height))
++            {
++                TextureManager::get().note_production_skipped_upload();
++                return hr;
++            }
++
+             static std::atomic<int> s_logged_maps{0};
+             if (s_logged_maps.load(std::memory_order_relaxed) < 20 && s_logged_maps.fetch_add(1, std::memory_order_relaxed) < 20)
+                 Logger::get().debug("[D3D11Hook] Hooked_Map: resource=" + ptr_hex(pResource));
+diff --git a/src/PartialPatch.cpp b/src/PartialPatch.cpp
+new file mode 100644
+index 0000000..4efcf0b
+--- /dev/null
++++ b/src/PartialPatch.cpp
+@@ -0,0 +1,474 @@
++#include "PartialPatch.h"
++
++#include "Logger.h"
++#include "PathUtil.h"
++#include "RoleManifest.h"
++
++#include <wincodec.h>
++#include <algorithm>
++#include <cctype>
++#include <cstring>
++#include <fstream>
++#include <sstream>
++
++namespace
++{
++    template <typename T>
++    struct ComRelease
++    {
++        T *ptr = nullptr;
++        ~ComRelease()
++        {
++            if (ptr)
++                ptr->Release();
++        }
++        T **put()
++        {
++            if (ptr)
++            {
++                ptr->Release();
++                ptr = nullptr;
++            }
++            return &ptr;
++        }
++    };
++
++    bool read_utf8_file(const std::filesystem::path &p, std::string &out)
++    {
++        std::ifstream f(p, std::ios::binary);
++        if (!f.is_open())
++            return false;
++        std::ostringstream ss;
++        ss << f.rdbuf();
++        out = ss.str();
++        return !out.empty();
++    }
++
++    size_t match_delim(const std::string &s, size_t open_pos, char open_ch, char close_ch)
++    {
++        int depth = 0;
++        bool in_str = false;
++        bool esc = false;
++        for (size_t i = open_pos; i < s.size(); ++i)
++        {
++            const char c = s[i];
++            if (esc)
++            {
++                esc = false;
++                continue;
++            }
++            if (in_str)
++            {
++                if (c == '\\')
++                    esc = true;
++                else if (c == '"')
++                    in_str = false;
++                continue;
++            }
++            if (c == '"')
++                in_str = true;
++            else if (c == open_ch)
++                ++depth;
++            else if (c == close_ch)
++            {
++                if (--depth == 0)
++                    return i;
++            }
++        }
++        return std::string::npos;
++    }
++
++    bool find_key_value_pos(const std::string &obj, const std::string &key, size_t &val_pos)
++    {
++        const std::string needle = "\"" + key + "\"";
++        const size_t kpos = obj.find(needle);
++        if (kpos == std::string::npos)
++            return false;
++        size_t colon = obj.find(':', kpos + needle.size());
++        if (colon == std::string::npos)
++            return false;
++        ++colon;
++        while (colon < obj.size() && std::isspace(static_cast<unsigned char>(obj[colon])))
++            ++colon;
++        if (colon >= obj.size())
++            return false;
++        val_pos = colon;
++        return true;
++    }
++
++    bool extract_str(const std::string &obj, const std::string &key, std::string &out)
++    {
++        size_t pos = 0;
++        if (!find_key_value_pos(obj, key, pos) || obj[pos] != '"')
++            return false;
++        ++pos;
++        std::string val;
++        bool esc = false;
++        while (pos < obj.size())
++        {
++            const char c = obj[pos++];
++            if (esc)
++            {
++                val.push_back(c);
++                esc = false;
++            }
++            else if (c == '\\')
++                esc = true;
++            else if (c == '"')
++            {
++                out = std::move(val);
++                return true;
++            }
++            else
++                val.push_back(c);
++        }
++        return false;
++    }
++
++    bool extract_u32(const std::string &obj, const std::string &key, uint32_t &out)
++    {
++        size_t pos = 0;
++        if (!find_key_value_pos(obj, key, pos) || !std::isdigit(static_cast<unsigned char>(obj[pos])))
++            return false;
++        uint64_t val = 0;
++        while (pos < obj.size() && std::isdigit(static_cast<unsigned char>(obj[pos])))
++        {
++            val = val * 10 + static_cast<uint64_t>(obj[pos] - '0');
++            ++pos;
++        }
++        out = static_cast<uint32_t>(val);
++        return true;
++    }
++
++    bool extract_bool(const std::string &obj, const std::string &key, bool default_val)
++    {
++        size_t pos = 0;
++        if (!find_key_value_pos(obj, key, pos))
++            return default_val;
++        if (obj.compare(pos, 4, "true") == 0)
++            return true;
++        if (obj.compare(pos, 5, "false") == 0)
++            return false;
++        return default_val;
++    }
++
++    std::vector<std::string> split_object_array(const std::string &src, const std::string &key)
++    {
++        std::vector<std::string> items;
++        size_t pos = 0;
++        if (!find_key_value_pos(src, key, pos) || src[pos] != '[')
++            return items;
++        const size_t rbr = match_delim(src, pos, '[', ']');
++        if (rbr == std::string::npos)
++            return items;
++        size_t cur = pos + 1;
++        while (cur < rbr)
++        {
++            const size_t lb = src.find('{', cur);
++            if (lb == std::string::npos || lb >= rbr)
++                break;
++            const size_t rb = match_delim(src, lb, '{', '}');
++            if (rb == std::string::npos || rb > rbr)
++                break;
++            items.push_back(src.substr(lb, rb - lb + 1));
++            cur = rb + 1;
++        }
++        return items;
++    }
++
++    std::vector<uint64_t> extract_hashes(const std::string &obj, const std::string &key)
++    {
++        std::vector<uint64_t> out;
++        size_t pos = 0;
++        if (!find_key_value_pos(obj, key, pos) || obj[pos] != '[')
++            return out;
++        const size_t rbr = match_delim(obj, pos, '[', ']');
++        if (rbr == std::string::npos)
++            return out;
++        size_t cur = pos + 1;
++        while (cur < rbr)
++        {
++            const size_t q1 = obj.find('"', cur);
++            if (q1 == std::string::npos || q1 >= rbr)
++                break;
++            const size_t q2 = obj.find('"', q1 + 1);
++            if (q2 == std::string::npos || q2 >= rbr)
++                break;
++            uint64_t h = 0;
++            if (TextureToolkit::RoleManifest::parse_hex64(obj.substr(q1 + 1, q2 - q1 - 1), h))
++                out.push_back(h);
++            cur = q2 + 1;
++        }
++        return out;
++    }
++
++    bool decode_png_bgra(const std::filesystem::path &path,
++                         uint32_t expected_w,
++                         uint32_t expected_h,
++                         std::vector<uint8_t> &out_bgra,
++                         std::string &out_err)
++    {
++        const HRESULT com_hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
++        const bool need_uninit = SUCCEEDED(com_hr);
++
++        auto cleanup = [need_uninit]() {
++            if (need_uninit)
++                CoUninitialize();
++        };
++
++        ComRelease<IWICImagingFactory> factory;
++        HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
++                                      IID_PPV_ARGS(factory.put()));
++        if (FAILED(hr) || !factory.ptr)
++        {
++            out_err = "CoCreateInstance(WICImagingFactory) failed";
++            cleanup();
++            return false;
++        }
++
++        ComRelease<IWICBitmapDecoder> decoder;
++        hr = factory.ptr->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
++                                                    WICDecodeMetadataCacheOnLoad, decoder.put());
++        if (FAILED(hr) || !decoder.ptr)
++        {
++            out_err = "WIC CreateDecoderFromFilename failed";
++            cleanup();
++            return false;
++        }
++
++        ComRelease<IWICBitmapFrameDecode> frame;
++        hr = decoder.ptr->GetFrame(0, frame.put());
++        if (FAILED(hr) || !frame.ptr)
++        {
++            out_err = "WIC GetFrame failed";
++            cleanup();
++            return false;
++        }
++
++        UINT w = 0, h = 0;
++        hr = frame.ptr->GetSize(&w, &h);
++        if (FAILED(hr) || w != expected_w || h != expected_h)
++        {
++            out_err = "PNG dimensions do not match manifest rect";
++            cleanup();
++            return false;
++        }
++
++        ComRelease<IWICFormatConverter> converter;
++        hr = factory.ptr->CreateFormatConverter(converter.put());
++        if (FAILED(hr) || !converter.ptr)
++        {
++            out_err = "WIC CreateFormatConverter failed";
++            cleanup();
++            return false;
++        }
++
++        hr = converter.ptr->Initialize(frame.ptr, GUID_WICPixelFormat32bppBGRA,
++                                       WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
++        if (FAILED(hr))
++        {
++            out_err = "WIC converter->Initialize(32bppBGRA) failed";
++            cleanup();
++            return false;
++        }
++
++        const UINT stride = w * 4;
++        out_bgra.resize(static_cast<size_t>(stride) * static_cast<size_t>(h));
++        hr = converter.ptr->CopyPixels(nullptr, stride, static_cast<UINT>(out_bgra.size()), out_bgra.data());
++        if (FAILED(hr))
++        {
++            out_err = "WIC CopyPixels failed";
++            cleanup();
++            return false;
++        }
++
++        cleanup();
++        return true;
++    }
++}
++
++namespace TextureToolkit
++{
++    void PartialPatchSet::clear()
++    {
++        m_specs.clear();
++    }
++
++    bool PartialPatchSet::load_from_dir(const std::filesystem::path &patch_dir)
++    {
++        clear();
++        const std::filesystem::path manifest_path = patch_dir / "patch_manifest.json";
++        std::string json;
++        if (!read_utf8_file(manifest_path, json))
++            return false;
++
++        const auto patch_objs = split_object_array(json, "patches");
++        for (const std::string &pobj : patch_objs)
++        {
++            PartialPatchSpec spec;
++            extract_str(pobj, "name", spec.name);
++            spec.hashes = extract_hashes(pobj, "hashes");
++            extract_u32(pobj, "width", spec.width);
++            extract_u32(pobj, "height", spec.height);
++            spec.overlay_over_inject = extract_bool(pobj, "overlay_over_inject", false);
++
++            if (spec.hashes.empty() || spec.width == 0 || spec.height == 0)
++                continue;
++
++            const auto rect_objs = split_object_array(pobj, "rects");
++            bool all_ok = !rect_objs.empty();
++            for (const std::string &robj : rect_objs)
++            {
++                PartialPatchRect r;
++                std::string png_rel;
++                if (!extract_u32(robj, "x", r.x) ||
++                    !extract_u32(robj, "y", r.y) ||
++                    !extract_u32(robj, "w", r.w) ||
++                    !extract_u32(robj, "h", r.h) ||
++                    !extract_str(robj, "png", png_rel))
++                {
++                    all_ok = false;
++                    break;
++                }
++                if (r.w == 0 || r.h == 0 || r.x + r.w > spec.width || r.y + r.h > spec.height)
++                {
++                    all_ok = false;
++                    break;
++                }
++                r.png_path = path_from_utf8(png_rel);
++                if (r.png_path.is_relative())
++                    r.png_path = patch_dir / r.png_path;
++
++                std::string err;
++                if (!decode_png_bgra(r.png_path, r.w, r.h, r.bgra_pixels, err))
++                {
++                    Logger::get().error("[PartialPatch] Failed loading rect '" + path_utf8(r.png_path) + "': " + err);
++                    all_ok = false;
++                    break;
++                }
++                spec.rects.push_back(std::move(r));
++            }
++
++            if (all_ok && !spec.rects.empty())
++            {
++                Logger::get().info("[PartialPatch] Loaded patch '" + spec.name + "' (" +
++                                   std::to_string(spec.width) + "x" + std::to_string(spec.height) + ", rects=" +
++                                   std::to_string(spec.rects.size()) + ")");
++                m_specs.push_back(std::move(spec));
++            }
++        }
++        return !m_specs.empty();
++    }
++
++    const PartialPatchSpec *PartialPatchSet::find(uint64_t hash, uint32_t width, uint32_t height) const noexcept
++    {
++        for (const auto &spec : m_specs)
++        {
++            if (spec.width != width || spec.height != height)
++                continue;
++            if (std::find(spec.hashes.begin(), spec.hashes.end(), hash) != spec.hashes.end())
++                return &spec;
++        }
++        return nullptr;
++    }
++
++    bool PartialPatchSet::is_supported_dxgi_format(DXGI_FORMAT fmt) noexcept
++    {
++        return fmt == DXGI_FORMAT_B8G8R8A8_UNORM ||
++               fmt == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
++               fmt == DXGI_FORMAT_B8G8R8X8_UNORM ||
++               fmt == DXGI_FORMAT_R8G8B8A8_UNORM ||
++               fmt == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
++    }
++
++    bool PartialPatchSet::apply_to_pixels(const PartialPatchSpec &spec,
++                                          const void *src_pixels,
++                                          uint32_t src_pitch,
++                                          DXGI_FORMAT src_fmt,
++                                          uint32_t width,
++                                          uint32_t height,
++                                          std::vector<uint8_t> &out_bgra,
++                                          PartialPatchStats &out_stats,
++                                          std::string &out_error)
++    {
++        if (!src_pixels || width != spec.width || height != spec.height || !is_supported_dxgi_format(src_fmt))
++        {
++            out_error = "unsupported source pixels or format";
++            return false;
++        }
++        const uint32_t tight_row = width * 4;
++        if (src_pitch < tight_row)
++        {
++            out_error = "source pitch smaller than tight row";
++            return false;
++        }
++
++        const bool swizzle_rgba = (src_fmt == DXGI_FORMAT_R8G8B8A8_UNORM ||
++                                   src_fmt == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB);
++
++        std::vector<uint8_t> orig_bgra(static_cast<size_t>(tight_row) * height);
++        const uint8_t *src_bytes = static_cast<const uint8_t *>(src_pixels);
++        for (uint32_t y = 0; y < height; ++y)
++        {
++            const uint8_t *sr = src_bytes + static_cast<size_t>(y) * src_pitch;
++            uint8_t *dr = orig_bgra.data() + static_cast<size_t>(y) * tight_row;
++            if (!swizzle_rgba)
++            {
++                std::memcpy(dr, sr, tight_row);
++            }
++            else
++            {
++                for (uint32_t x = 0; x < width; ++x)
++                {
++                    dr[x * 4 + 0] = sr[x * 4 + 2];
++                    dr[x * 4 + 1] = sr[x * 4 + 1];
++                    dr[x * 4 + 2] = sr[x * 4 + 0];
++                    dr[x * 4 + 3] = sr[x * 4 + 3];
++                }
++            }
++        }
++
++        out_bgra = orig_bgra;
++        std::vector<uint8_t> dirty_mask(static_cast<size_t>(width) * height, 0);
++        size_t total_png_bytes = 0;
++
++        for (const auto &r : spec.rects)
++        {
++            if (r.x + r.w > width || r.y + r.h > height || r.bgra_pixels.size() != static_cast<size_t>(r.w) * r.h * 4)
++            {
++                out_error = "patch rect geometry mismatch";
++                return false;
++            }
++            for (uint32_t row = 0; row < r.h; ++row)
++            {
++                const size_t dst_off = (static_cast<size_t>(r.y + row) * width + r.x) * 4;
++                const size_t src_off = static_cast<size_t>(row) * r.w * 4;
++                std::memcpy(out_bgra.data() + dst_off, r.bgra_pixels.data() + src_off, static_cast<size_t>(r.w) * 4);
++                std::memset(dirty_mask.data() + static_cast<size_t>(r.y + row) * width + r.x, 1, r.w);
++            }
++            std::error_code ec;
++            total_png_bytes += static_cast<size_t>(std::filesystem::file_size(r.png_path, ec));
++        }
++
++        out_stats = {};
++        out_stats.total_pixels = static_cast<size_t>(width) * height;
++        out_stats.png_total_bytes = total_png_bytes;
++        for (size_t i = 0; i < out_stats.total_pixels; ++i)
++        {
++            if (dirty_mask[i])
++            {
++                ++out_stats.patched_pixels;
++            }
++            else if (std::memcmp(out_bgra.data() + i * 4, orig_bgra.data() + i * 4, 4) == 0)
++            {
++                ++out_stats.untouched_verified_pixels;
++            }
++            else
++            {
++                out_error = "unexpected modification outside patch rect";
++                return false;
++            }
++        }
++        return true;
++    }
++}
+diff --git a/src/PartialPatch.h b/src/PartialPatch.h
+new file mode 100644
+index 0000000..8f42038
+--- /dev/null
++++ b/src/PartialPatch.h
+@@ -0,0 +1,63 @@
++#pragma once
++
++#include <d3d11.h>
++#include <cstdint>
++#include <filesystem>
++#include <string>
++#include <vector>
++
++namespace TextureToolkit
++{
++    struct PartialPatchRect
++    {
++        uint32_t x = 0;
++        uint32_t y = 0;
++        uint32_t w = 0;
++        uint32_t h = 0;
++        std::filesystem::path png_path;
++        std::vector<uint8_t> bgra_pixels; // tightly packed w * h * 4
++    };
++
++    struct PartialPatchSpec
++    {
++        std::string name;
++        std::vector<uint64_t> hashes;
++        uint32_t width = 0;
++        uint32_t height = 0;
++        bool overlay_over_inject = false;
++        std::vector<PartialPatchRect> rects;
++    };
++
++    struct PartialPatchStats
++    {
++        size_t total_pixels = 0;
++        size_t patched_pixels = 0;
++        size_t untouched_verified_pixels = 0;
++        size_t png_total_bytes = 0;
++    };
++
++    class PartialPatchSet
++    {
++    public:
++        void clear();
++        bool load_from_dir(const std::filesystem::path &patch_dir);
++        bool empty() const noexcept { return m_specs.empty(); }
++        const std::vector<PartialPatchSpec> &specs() const noexcept { return m_specs; }
++
++        const PartialPatchSpec *find(uint64_t hash, uint32_t width, uint32_t height) const noexcept;
++
++        static bool is_supported_dxgi_format(DXGI_FORMAT fmt) noexcept;
++        static bool apply_to_pixels(const PartialPatchSpec &spec,
++                                    const void *src_pixels,
++                                    uint32_t src_pitch,
++                                    DXGI_FORMAT src_fmt,
++                                    uint32_t width,
++                                    uint32_t height,
++                                    std::vector<uint8_t> &out_bgra,
++                                    PartialPatchStats &out_stats,
++                                    std::string &out_error);
++
++    private:
++        std::vector<PartialPatchSpec> m_specs;
++    };
++}
+diff --git a/src/RoleManifest.cpp b/src/RoleManifest.cpp
+new file mode 100644
+index 0000000..6838062
+--- /dev/null
++++ b/src/RoleManifest.cpp
+@@ -0,0 +1,363 @@
++#include "RoleManifest.h"
++
++#include <cctype>
++#include <cstdio>
++#include <fstream>
++#include <sstream>
++
++namespace
++{
++    using TextureToolkit::RoleEntry;
++    using TextureToolkit::RoleManifest;
++
++    bool read_file_utf8(const std::filesystem::path &path, std::string &out)
++    {
++        std::ifstream f(path, std::ios::in | std::ios::binary);
++        if (!f.is_open())
++            return false;
++        std::ostringstream ss;
++        ss << f.rdbuf();
++        out = ss.str();
++        return !out.empty();
++    }
++
++    size_t find_matching_delim(const std::string &s, size_t open_pos, char open_ch, char close_ch)
++    {
++        int depth = 0;
++        bool in_str = false;
++        bool esc = false;
++        for (size_t i = open_pos; i < s.size(); ++i)
++        {
++            const char c = s[i];
++            if (esc)
++            {
++                esc = false;
++                continue;
++            }
++            if (in_str)
++            {
++                if (c == '\\')
++                    esc = true;
++                else if (c == '"')
++                    in_str = false;
++                continue;
++            }
++            if (c == '"')
++            {
++                in_str = true;
++            }
++            else if (c == open_ch)
++            {
++                ++depth;
++            }
++            else if (c == close_ch)
++            {
++                --depth;
++                if (depth == 0)
++                    return i;
++            }
++        }
++        return std::string::npos;
++    }
++
++    bool extract_json_string(const std::string &obj, const std::string &key, std::string &out)
++    {
++        const std::string needle = "\"" + key + "\"";
++        const size_t kpos = obj.find(needle);
++        if (kpos == std::string::npos)
++            return false;
++        size_t pos = obj.find(':', kpos + needle.size());
++        if (pos == std::string::npos)
++            return false;
++        ++pos;
++        while (pos < obj.size() && std::isspace(static_cast<unsigned char>(obj[pos])))
++            ++pos;
++        if (pos >= obj.size() || obj[pos] != '"')
++            return false;
++        ++pos;
++        std::string val;
++        bool esc = false;
++        while (pos < obj.size())
++        {
++            const char c = obj[pos++];
++            if (esc)
++            {
++                val.push_back(c);
++                esc = false;
++            }
++            else if (c == '\\')
++            {
++                esc = true;
++            }
++            else if (c == '"')
++            {
++                out = std::move(val);
++                return true;
++            }
++            else
++            {
++                val.push_back(c);
++            }
++        }
++        return false;
++    }
++
++    bool extract_json_uint(const std::string &obj, const std::string &key, uint32_t &out)
++    {
++        const std::string needle = "\"" + key + "\"";
++        const size_t kpos = obj.find(needle);
++        if (kpos == std::string::npos)
++            return false;
++        size_t pos = obj.find(':', kpos + needle.size());
++        if (pos == std::string::npos)
++            return false;
++        ++pos;
++        while (pos < obj.size() && std::isspace(static_cast<unsigned char>(obj[pos])))
++            ++pos;
++        if (pos >= obj.size() || !std::isdigit(static_cast<unsigned char>(obj[pos])))
++            return false;
++        uint64_t val = 0;
++        while (pos < obj.size() && std::isdigit(static_cast<unsigned char>(obj[pos])))
++        {
++            val = val * 10 + static_cast<uint64_t>(obj[pos] - '0');
++            ++pos;
++        }
++        out = static_cast<uint32_t>(val);
++        return true;
++    }
++
++    std::vector<uint64_t> extract_hash_array(const std::string &obj, const std::string &key)
++    {
++        std::vector<uint64_t> out;
++        const std::string needle = "\"" + key + "\"";
++        const size_t kpos = obj.find(needle);
++        if (kpos == std::string::npos)
++            return out;
++        const size_t lbr = obj.find('[', kpos + needle.size());
++        if (lbr == std::string::npos)
++            return out;
++        const size_t rbr = find_matching_delim(obj, lbr, '[', ']');
++        if (rbr == std::string::npos)
++            return out;
++
++        size_t pos = lbr + 1;
++        while (pos < rbr)
++        {
++            const size_t q1 = obj.find('"', pos);
++            if (q1 == std::string::npos || q1 >= rbr)
++                break;
++            const size_t q2 = obj.find('"', q1 + 1);
++            if (q2 == std::string::npos || q2 >= rbr)
++                break;
++            uint64_t h = 0;
++            if (RoleManifest::parse_hex64(obj.substr(q1 + 1, q2 - q1 - 1), h))
++                out.push_back(h);
++            pos = q2 + 1;
++        }
++        return out;
++    }
++
++    std::string json_escape(const std::string &s)
++    {
++        std::string out;
++        out.reserve(s.size() + 8);
++        for (const unsigned char c : s)
++        {
++            if (c == '\\')
++                out += "\\\\";
++            else if (c == '"')
++                out += "\\\"";
++            else if (c == '\n')
++                out += "\\n";
++            else if (c == '\r')
++                out += "\\r";
++            else if (c == '\t')
++                out += "\\t";
++            else if (c >= 0x20)
++                out.push_back(static_cast<char>(c));
++        }
++        return out;
++    }
++
++    void write_string_array(std::ostringstream &ss, const std::vector<std::string> &items)
++    {
++        ss << "[";
++        for (size_t i = 0; i < items.size(); ++i)
++        {
++            if (i > 0)
++                ss << ", ";
++            ss << "\"" << json_escape(items[i]) << "\"";
++        }
++        ss << "]";
++    }
++
++    uint64_t dim_key(uint32_t w, uint32_t h)
++    {
++        return (static_cast<uint64_t>(w) << 32) | static_cast<uint64_t>(h);
++    }
++}
++
++namespace TextureToolkit
++{
++    bool RoleManifest::parse_hex64(const std::string &hex, uint64_t &out)
++    {
++        if (hex.empty() || hex.size() > 16)
++            return false;
++        uint64_t v = 0;
++        for (const unsigned char c : hex)
++        {
++            if (!std::isxdigit(c))
++                return false;
++            const uint64_t d = std::isdigit(c) ? static_cast<uint64_t>(c - '0')
++                                               : static_cast<uint64_t>(std::toupper(c) - 'A' + 10);
++            v = (v << 4) | d;
++        }
++        out = v;
++        return v != 0;
++    }
++
++    std::string RoleManifest::format_hex64(uint64_t value)
++    {
++        char buf[20] = {};
++        std::snprintf(buf, sizeof(buf), "%016llX", static_cast<unsigned long long>(value));
++        return buf;
++    }
++
++    void RoleManifest::clear()
++    {
++        m_loaded = false;
++        m_path.clear();
++        m_roles.clear();
++        m_hash_index.clear();
++        m_watched_dims.clear();
++    }
++
++    bool RoleManifest::load_from_file(const std::filesystem::path &path)
++    {
++        clear();
++        std::string text;
++        if (!read_file_utf8(path, text))
++            return false;
++
++        const size_t rkey = text.find("\"roles\"");
++        if (rkey == std::string::npos)
++            return false;
++        const size_t arr_open = text.find('[', rkey);
++        if (arr_open == std::string::npos)
++            return false;
++        const size_t arr_close = find_matching_delim(text, arr_open, '[', ']');
++        if (arr_close == std::string::npos)
++            return false;
++
++        size_t pos = arr_open + 1;
++        while (pos < arr_close)
++        {
++            const size_t obj_open = text.find('{', pos);
++            if (obj_open == std::string::npos || obj_open >= arr_close)
++                break;
++            const size_t obj_close = find_matching_delim(text, obj_open, '{', '}');
++            if (obj_close == std::string::npos || obj_close > arr_close)
++                break;
++
++            const std::string obj = text.substr(obj_open, obj_close - obj_open + 1);
++            RoleEntry entry;
++            if (extract_json_string(obj, "role", entry.role) && !entry.role.empty())
++            {
++                extract_json_string(obj, "status", entry.status);
++                extract_json_uint(obj, "width", entry.width);
++                extract_json_uint(obj, "height", entry.height);
++                extract_json_string(obj, "canonical_dds", entry.canonical_dds);
++                entry.vanilla_hashes = extract_hash_array(obj, "vanilla_hashes");
++                entry.legacy_hashes = extract_hash_array(obj, "legacy_hashes");
++                entry.shared_hashes = extract_hash_array(obj, "shared_hashes");
++                entry.all_hashes = extract_hash_array(obj, "all_hashes");
++
++                const size_t idx = m_roles.size();
++                for (const uint64_t h : entry.shared_hashes)
++                    m_hash_index[h] = {idx, RoleHashOrigin::Shared};
++                for (const uint64_t h : entry.vanilla_hashes)
++                    m_hash_index.try_emplace(h, RoleHashBinding{idx, RoleHashOrigin::Vanilla});
++                for (const uint64_t h : entry.legacy_hashes)
++                    m_hash_index.try_emplace(h, RoleHashBinding{idx, RoleHashOrigin::Legacy});
++                if (entry.status == "CONFIRMED" && entry.width > 0 && entry.height > 0)
++                    m_watched_dims.insert(dim_key(entry.width, entry.height));
++                m_roles.push_back(std::move(entry));
++            }
++            pos = obj_close + 1;
++        }
++
++        m_loaded = !m_roles.empty();
++        m_path = path;
++        return m_loaded;
++    }
++
++    bool RoleManifest::lookup_hash(uint64_t hash, const RoleEntry **out_role, RoleHashOrigin *out_origin) const
++    {
++        auto it = m_hash_index.find(hash);
++        if (it == m_hash_index.end())
++            return false;
++        if (out_role)
++            *out_role = &m_roles[it->second.role_index];
++        if (out_origin)
++            *out_origin = it->second.origin;
++        return true;
++    }
++
++    bool RoleManifest::is_watched_dim(uint32_t width, uint32_t height) const
++    {
++        return m_watched_dims.find(dim_key(width, height)) != m_watched_dims.end();
++    }
++
++    std::filesystem::path RoleManifest::resolve_alias_path(
++        uint64_t hash,
++        const std::unordered_map<uint64_t, std::filesystem::path> &injected_files) const
++    {
++        auto it = m_hash_index.find(hash);
++        if (it == m_hash_index.end())
++            return {};
++        const RoleEntry &r = m_roles[it->second.role_index];
++        for (const uint64_t sib : r.all_hashes)
++        {
++            auto fit = injected_files.find(sib);
++            if (fit != injected_files.end())
++                return fit->second;
++        }
++        return {};
++    }
++
++    bool RoleManifest::write_status_json(const std::filesystem::path &out_path, const RoleTelemetrySnapshot &snap)
++    {
++        std::error_code ec;
++        std::filesystem::create_directories(out_path.parent_path(), ec);
++        std::ofstream f(out_path, std::ios::out | std::ios::trunc | std::ios::binary);
++        if (!f.is_open())
++            return false;
++
++        std::ostringstream ss;
++        ss << "{\n"
++           << "  \"manifest_loaded\": " << (snap.manifest_loaded ? "true" : "false") << ",\n"
++           << "  \"manifest_path\": \"" << json_escape(snap.manifest_path) << "\",\n"
++           << "  \"roles_total\": " << snap.roles_total << ",\n"
++           << "  \"confirmed_roles\": " << snap.confirmed_roles << ",\n"
++           << "  \"profile\": \"" << json_escape(snap.profile) << "\",\n"
++           << "  \"injected_files_count\": " << snap.injected_files_count << ",\n"
++           << "  \"injected_active_count\": " << snap.injected_active_count << ",\n"
++           << "  \"failed_injections_count\": " << snap.failed_injections_count << ",\n"
++           << "  \"skipped_uploads\": " << snap.skipped_uploads << ",\n"
++           << "  \"matched_vanilla_roles\": ";
++        write_string_array(ss, snap.matched_vanilla_roles);
++        ss << ",\n  \"matched_legacy_roles\": ";
++        write_string_array(ss, snap.matched_legacy_roles);
++        ss << ",\n  \"matched_shared_roles\": ";
++        write_string_array(ss, snap.matched_shared_roles);
++        ss << ",\n  \"failed_roles\": ";
++        write_string_array(ss, snap.failed_roles);
++        ss << ",\n  \"unknown_watched_hashes\": ";
++        write_string_array(ss, snap.unknown_watched_hashes);
++        ss << "\n}\n";
++
++        const std::string txt = ss.str();
++        f.write(txt.data(), static_cast<std::streamsize>(txt.size()));
++        return f.good();
++    }
++}
+diff --git a/src/RoleManifest.h b/src/RoleManifest.h
+new file mode 100644
+index 0000000..effe23c
+--- /dev/null
++++ b/src/RoleManifest.h
+@@ -0,0 +1,86 @@
++#pragma once
++
++#include <cstdint>
++#include <filesystem>
++#include <string>
++#include <unordered_map>
++#include <unordered_set>
++#include <vector>
++
++namespace TextureToolkit
++{
++    enum class RoleHashOrigin
++    {
++        None = 0,
++        Vanilla,
++        Legacy,
++        Shared,
++    };
++
++    struct RoleEntry
++    {
++        std::string role;
++        std::string status;
++        uint32_t width = 0;
++        uint32_t height = 0;
++        std::string canonical_dds;
++        std::vector<uint64_t> vanilla_hashes;
++        std::vector<uint64_t> legacy_hashes;
++        std::vector<uint64_t> shared_hashes;
++        std::vector<uint64_t> all_hashes;
++    };
++
++    struct RoleHashBinding
++    {
++        size_t role_index = 0;
++        RoleHashOrigin origin = RoleHashOrigin::None;
++    };
++
++    struct RoleTelemetrySnapshot
++    {
++        bool manifest_loaded = false;
++        std::string manifest_path;
++        size_t roles_total = 0;
++        size_t confirmed_roles = 0;
++        std::string profile = "MANIFEST_MISSING"; // VANILLA_KNOWN, LEGACY_KNOWN, SHARED_ONLY, MIXED_OR_PARTIAL_UNKNOWN, AWAITING_TEXTURES, MANIFEST_MISSING
++        std::vector<std::string> matched_vanilla_roles;
++        std::vector<std::string> matched_legacy_roles;
++        std::vector<std::string> matched_shared_roles;
++        std::vector<std::string> failed_roles;
++        std::vector<std::string> unknown_watched_hashes;
++        size_t injected_files_count = 0;
++        size_t injected_active_count = 0;
++        size_t failed_injections_count = 0;
++        uint64_t skipped_uploads = 0;
++    };
++
++    class RoleManifest
++    {
++    public:
++        bool load_from_file(const std::filesystem::path &path);
++        void clear();
++
++        bool loaded() const { return m_loaded; }
++        const std::filesystem::path &path() const { return m_path; }
++        const std::vector<RoleEntry> &roles() const { return m_roles; }
++
++        bool lookup_hash(uint64_t hash, const RoleEntry **out_role, RoleHashOrigin *out_origin) const;
++        bool is_watched_dim(uint32_t width, uint32_t height) const;
++
++        // If a sibling hash of the same role exists in injected_files, resolve hash to it.
++        std::filesystem::path resolve_alias_path(
++            uint64_t hash,
++            const std::unordered_map<uint64_t, std::filesystem::path> &injected_files) const;
++
++        static bool parse_hex64(const std::string &hex, uint64_t &out);
++        static std::string format_hex64(uint64_t value);
++        static bool write_status_json(const std::filesystem::path &out_path, const RoleTelemetrySnapshot &snap);
++
++    private:
++        bool m_loaded = false;
++        std::filesystem::path m_path;
++        std::vector<RoleEntry> m_roles;
++        std::unordered_map<uint64_t, RoleHashBinding> m_hash_index;
++        std::unordered_set<uint64_t> m_watched_dims;
++    };
++}
+diff --git a/src/TextureManager.cpp b/src/TextureManager.cpp
+index 3c4604a..99734c5 100644
+--- a/src/TextureManager.cpp
++++ b/src/TextureManager.cpp
+@@ -3,6 +3,7 @@
+ #include "D3D9Hook.h"
+ #include "D3D11Hook.h"
+ #include "DDSLoader.h"
++#include "PartialPatch.h"
+ #include "ScopedFlag.h"
+ #include "Logger.h"
+ #include "PathUtil.h"
+@@ -15,9 +16,28 @@
+ #include <iterator>
+ #include <cstring>
+ #include <cwctype>
++#include <fstream>
+ 
+ namespace TextureToolkit
+ {
++    static uint64_t pack_dim_key(UINT width, UINT height)
++    {
++        return (static_cast<uint64_t>(width) << 32) | static_cast<uint64_t>(height);
++    }
++
++    static bool read_dds_dimensions(const std::filesystem::path &path, UINT &out_w, UINT &out_h)
++    {
++        std::ifstream f(path, std::ios::binary);
++        if (!f.is_open())
++            return false;
++        uint32_t hdr[5] = {};
++        f.read(reinterpret_cast<char *>(hdr), sizeof(hdr));
++        if (!f || hdr[0] != 0x20534444u || hdr[1] < 124u)
++            return false;
++        out_h = hdr[3];
++        out_w = hdr[4];
++        return out_w > 0 && out_h > 0;
++    }
+     // Private-data GUID used to tag every original game resource with its content
+     // hash. The driver clears private data when the object is destroyed, so a reused
+     // pointer belonging to a new resource never carries a stale hash -- this is what
+@@ -500,13 +520,19 @@ namespace TextureToolkit
+         m_resource_root = root;
+         m_dump_dir = root / "dump";
+         m_inject_dir = root / "inject";
++        m_manifest_path = cfg.role_manifest_path.empty()
++            ? (m_resource_root / "texture_manifest_r2.json")
++            : (m_game_dir / cfg.role_manifest_path);
++        m_profile_status_path = m_resource_root / "tt_profile_status.json";
+ 
+         auto_dump = cfg.auto_dump;
+         enable_injection = cfg.enable_injection;
++        production_mode = cfg.production_mode;
+         filter_small_textures = cfg.filter_small_textures;
+         show_current_frame_only = cfg.show_current_frame_only;
+         accept_sk_names = cfg.accept_sk_names;
+         highlight_selected = cfg.highlight_selected;
++        m_production_skipped_uploads.store(0, std::memory_order_relaxed);
+ 
+         std::error_code ec;
+         std::filesystem::create_directories(m_dump_dir, ec);
+@@ -525,6 +551,12 @@ namespace TextureToolkit
+ 
+     void TextureManager::shutdown()
+     {
++        const uint64_t prod_skipped = m_production_skipped_uploads.load(std::memory_order_relaxed);
++        if (is_production_skip_mode() || prod_skipped > 0)
++        {
++            Logger::get().info("[TextureManager] ProductionMode shutdown summary: skipped " +
++                               std::to_string(prod_skipped) + " non-allowlisted texture upload(s) before CPU pixel hashing.");
++        }
+         {
+             std::lock_guard<std::mutex> lock(m_dump_mutex);
+             m_dump_thread_running = false;
+@@ -536,6 +568,7 @@ namespace TextureToolkit
+         }
+ 
+         std::lock_guard<std::mutex> lock(m_mutex);
++        flush_profile_status_locked(true);
+         m_bind_generation.fetch_add(1, std::memory_order_relaxed);
+         release_replacements();
+         for (IUnknown *p : m_retired_replacements)
+@@ -1036,6 +1069,11 @@ namespace TextureToolkit
+         drain_retired_replacements();
+         process_pending_injections();
+         process_readback_queue();
++        if (m_profile_dirty && now_ticks >= m_next_profile_flush_ticks)
++        {
++            m_next_profile_flush_ticks = now_ticks + 1500;
++            flush_profile_status_locked(false);
++        }
+     }
+ 
+     void TextureManager::evict_stale_textures(uint64_t now_ticks)
+@@ -1349,6 +1387,12 @@ namespace TextureToolkit
+             }
+         }
+ 
++        RoleManifest parsed_manifest;
++        const bool manifest_ok = !m_manifest_path.empty() && parsed_manifest.load_from_file(m_manifest_path);
++
++        PartialPatchSet parsed_patches;
++        const bool patches_ok = parsed_patches.load_from_dir(m_resource_root / "patches");
++
+         {
+             std::lock_guard<std::mutex> lock(m_mutex);
+ 
+@@ -1364,8 +1408,65 @@ namespace TextureToolkit
+             m_sk_injected_rank.swap(found_sk_rank);
+             m_have_sk_files.store(!m_sk_injected_files.empty(), std::memory_order_relaxed);
+             m_failed_injections.clear(); // retry files that were bad last time; they may be fixed now
++            m_failed_roles.clear();
+             m_pending_injections.clear();
+             m_mods = mods;
++            m_role_manifest = std::move(parsed_manifest);
++            m_partial_patches = std::move(parsed_patches);
++
++            std::vector<uint64_t> allow_dims;
++            bool dims_ok = true;
++            const auto add_dim_for = [&allow_dims, &dims_ok](const std::filesystem::path &dds_path)
++            {
++                UINT w = 0, h = 0;
++                if (!read_dds_dimensions(dds_path, w, h))
++                {
++                    dims_ok = false;
++                    Logger::get().warn("[TextureManager] Could not read DDS dimensions for allowlist: " + path_utf8(dds_path));
++                    return;
++                }
++                const uint64_t key = pack_dim_key(w, h);
++                if (std::find(allow_dims.begin(), allow_dims.end(), key) == allow_dims.end())
++                    allow_dims.push_back(key);
++            };
++            for (const auto &kv : m_injected_files)
++                add_dim_for(kv.second);
++            for (const auto &kv : m_sk_injected_files)
++                add_dim_for(kv.second);
++            if (manifest_ok)
++            {
++                for (const RoleEntry &r : m_role_manifest.roles())
++                {
++                    if (r.status == "CONFIRMED" && r.width > 0 && r.height > 0)
++                    {
++                        const uint64_t key = pack_dim_key(r.width, r.height);
++                        if (std::find(allow_dims.begin(), allow_dims.end(), key) == allow_dims.end())
++                            allow_dims.push_back(key);
++                    }
++                }
++            }
++            if (patches_ok)
++            {
++                for (const PartialPatchSpec &p : m_partial_patches.specs())
++                {
++                    const uint64_t key = pack_dim_key(p.width, p.height);
++                    if (std::find(allow_dims.begin(), allow_dims.end(), key) == allow_dims.end())
++                        allow_dims.push_back(key);
++                }
++            }
++            {
++                std::lock_guard<std::mutex> dim_lock(m_dims_mutex);
++                m_injected_dims = std::move(allow_dims);
++                m_injected_dim_filter_ready = dims_ok;
++            }
++            flush_profile_status_locked(true);
++            if (is_production_skip_mode())
++            {
++                Logger::get().info("[TextureManager] ProductionMode allowlist: " +
++                                   std::to_string(m_injected_dims.size()) + " unique dimension(s) from " +
++                                   std::to_string(m_injected_files.size() + m_sk_injected_files.size()) +
++                                   " replacement DDS file(s) (ready=" + (dims_ok ? "1" : "0") + ").");
++            }
+ 
+             // Replacements are rebuilt after the next time each texture is drawn (flagged by
+             // note_pending_injection, built by process_pending_injections), so newly added DDS
+@@ -1471,7 +1572,95 @@ namespace TextureToolkit
+             }
+         }
+ 
+-        return (it != m_injected_files.end()) ? it->second : std::filesystem::path();
++        if (it != m_injected_files.end())
++            return it->second;
++
++        if (m_role_manifest.loaded())
++            return m_role_manifest.resolve_alias_path(hash, m_injected_files);
++        return std::filesystem::path();
++    }
++
++    void TextureManager::record_role_observation_locked(uint64_t hash, UINT width, UINT height, bool failed)
++    {
++        if (!m_role_manifest.loaded())
++            return;
++
++        const RoleEntry *role = nullptr;
++        RoleHashOrigin origin = RoleHashOrigin::None;
++        bool changed = false;
++        if (m_role_manifest.lookup_hash(hash, &role, &origin) && role != nullptr)
++        {
++            if (origin == RoleHashOrigin::Vanilla)
++                changed |= m_matched_vanilla_roles.insert(role->role).second;
++            else if (origin == RoleHashOrigin::Legacy)
++                changed |= m_matched_legacy_roles.insert(role->role).second;
++            else if (origin == RoleHashOrigin::Shared)
++                changed |= m_matched_shared_roles.insert(role->role).second;
++
++            if (failed)
++                changed |= m_failed_roles.insert(role->role).second;
++            else
++                changed |= (m_failed_roles.erase(role->role) > 0);
++        }
++        else if (m_role_manifest.is_watched_dim(width, height) && m_injected_files.find(hash) == m_injected_files.end())
++        {
++            if (m_unknown_watched_hashes.size() < 64)
++            {
++                const std::string tag = RoleManifest::format_hex64(hash) + "@" +
++                                        std::to_string(width) + "x" + std::to_string(height);
++                changed |= m_unknown_watched_hashes.insert(tag).second;
++            }
++        }
++        if (changed)
++            m_profile_dirty = true;
++    }
++
++    void TextureManager::flush_profile_status_locked(bool force)
++    {
++        if (m_profile_status_path.empty())
++            return;
++        if (!force && !m_profile_dirty)
++            return;
++
++        RoleTelemetrySnapshot snap;
++        snap.manifest_loaded = m_role_manifest.loaded();
++        snap.manifest_path = path_utf8(m_manifest_path);
++        snap.roles_total = m_role_manifest.roles().size();
++        for (const RoleEntry &r : m_role_manifest.roles())
++        {
++            if (r.status == "CONFIRMED")
++                ++snap.confirmed_roles;
++        }
++        snap.matched_vanilla_roles.assign(m_matched_vanilla_roles.begin(), m_matched_vanilla_roles.end());
++        snap.matched_legacy_roles.assign(m_matched_legacy_roles.begin(), m_matched_legacy_roles.end());
++        snap.matched_shared_roles.assign(m_matched_shared_roles.begin(), m_matched_shared_roles.end());
++        snap.failed_roles.assign(m_failed_roles.begin(), m_failed_roles.end());
++        snap.unknown_watched_hashes.assign(m_unknown_watched_hashes.begin(), m_unknown_watched_hashes.end());
++        snap.injected_files_count = m_injected_files.size() + m_sk_injected_files.size();
++        snap.injected_active_count = m_d3d11_replacements.size() + m_d3d9_replacements.size();
++        snap.failed_injections_count = m_failed_injections.size();
++        snap.skipped_uploads = m_production_skipped_uploads.load(std::memory_order_relaxed);
++
++        const bool has_v = !snap.matched_vanilla_roles.empty();
++        const bool has_l = !snap.matched_legacy_roles.empty();
++        const bool has_s = !snap.matched_shared_roles.empty();
++        if (!snap.manifest_loaded)
++            snap.profile = "MANIFEST_MISSING";
++        else if (!snap.failed_roles.empty() || (has_v && has_l))
++            snap.profile = "MIXED_OR_PARTIAL_UNKNOWN";
++        else if (has_v)
++            snap.profile = "VANILLA_KNOWN";
++        else if (has_l)
++            snap.profile = "LEGACY_KNOWN";
++        else if (has_s)
++            snap.profile = "SHARED_ONLY";
++        else if (!snap.unknown_watched_hashes.empty())
++            snap.profile = "PARTIAL_UNKNOWN";
++        else
++            snap.profile = "AWAITING_TEXTURES";
++
++        if (RoleManifest::write_status_json(m_profile_status_path, snap))
++            m_profile_dirty = false;
+     }
+ 
+     uint64_t TextureManager::get_tagged_hash9(IDirect3DBaseTexture9 *texture) const
+@@ -1605,7 +1794,8 @@ namespace TextureToolkit
+     bool TextureManager::has_inject_file(uint64_t hash, uint32_t sk_hash) const
+     {
+         return m_injected_files.find(hash) != m_injected_files.end() ||
+-               (accept_sk_names && sk_hash != 0 && m_sk_injected_files.find(sk_hash) != m_sk_injected_files.end());
++               (accept_sk_names && sk_hash != 0 && m_sk_injected_files.find(sk_hash) != m_sk_injected_files.end()) ||
++               (m_role_manifest.loaded() && !m_role_manifest.resolve_alias_path(hash, m_injected_files).empty());
+     }
+ 
+     // Flags a drawn texture that has an inject file but no live replacement yet. Cheap: this runs
+@@ -1813,6 +2003,25 @@ namespace TextureToolkit
+         stats.last_hash = hash;
+     }
+ 
++    bool TextureManager::should_process_texture_upload(UINT width, UINT height) const
++    {
++        if (!production_mode || auto_dump)
++            return true;
++
++        if (!enable_injection)
++            return false;
++
++        std::lock_guard<std::mutex> lock(m_dims_mutex);
++        if (!m_injected_dim_filter_ready)
++            return !(width == 1024 && height == 1024);
++
++        if (m_injected_dims.empty())
++            return false;
++
++        const uint64_t key = pack_dim_key(width, height);
++        return std::find(m_injected_dims.begin(), m_injected_dims.end(), key) != m_injected_dims.end();
++    }
++
+     void TextureManager::register_unmap_texture9(IDirect3DDevice9 *device, IDirect3DTexture9 *texture, const void *pixel_data, UINT width, UINT height, D3DFORMAT format, UINT pitch,
+                                                  uint32_t sk_hash_override)
+     {
+@@ -1822,6 +2031,12 @@ namespace TextureToolkit
+         if (filter_small_textures && (width < 16 || height < 16))
+             return;
+ 
++        if (!should_process_texture_upload(width, height))
++        {
++            note_production_skipped_upload();
++            return;
++        }
++
+         // Read the upload history BEFORE hashing: the whole point is to not pay for the pass.
+         UploadStats stats = {};
+         DWORD stats_size = sizeof(stats);
+@@ -2273,6 +2488,12 @@ namespace TextureToolkit
+         if (filter_small_textures && (width < 16 || height < 16))
+             return;
+ 
++        if (!should_process_texture_upload(width, height))
++        {
++            note_production_skipped_upload();
++            return;
++        }
++
+         reshade::api::format reshade_fmt = static_cast<reshade::api::format>(format);
+ 
+         // Hash the tight rows, never the source pitch. On the Map/Unmap path that pitch is chosen
+@@ -2374,15 +2595,71 @@ namespace TextureToolkit
+         }
+ 
+         bool via_sk_name = false;
++        bool repl_failed = false;
+         std::filesystem::path inject_path = find_injection_path(hash, sk_hash, &via_sk_name);
+         details.injected_via_sk_name = via_sk_name;
++        const PartialPatchSpec *partial_patch = m_partial_patches.find(hash, width, height);
+         // See the Direct3D 9 path: a failure here is recorded, and not retried on every re-upload.
+-        if (enable_injection && !inject_path.empty() &&
++        if (enable_injection &&
+             m_d3d11_replacements.find(hash) == m_d3d11_replacements.end() &&
+             m_failed_injections.find(hash) == m_failed_injections.end())
+         {
+-            if (!build_replacement11(device, hash, inject_path, original_levels, details))
+-                m_failed_injections.insert(hash);
++            if (!inject_path.empty())
++            {
++                if (partial_patch != nullptr && partial_patch->overlay_over_inject)
++                {
++                    DDSImage base_dds;
++                    std::vector<uint8_t> patched_bgra;
++                    PartialPatchStats pstats{};
++                    std::string perr;
++                    if (load_dds(path_utf8(inject_path), base_dds) && !base_dds.subresources.empty() &&
++                        PartialPatchSet::apply_to_pixels(*partial_patch,
++                                                         base_dds.subresources[0].data(),
++                                                         base_dds.row_pitches[0],
++                                                         static_cast<DXGI_FORMAT>(base_dds.format),
++                                                         base_dds.width,
++                                                         base_dds.height,
++                                                         patched_bgra,
++                                                         pstats,
++                                                         perr))
++                    {
++                        base_dds.format = reshade::api::format::b8g8r8a8_unorm;
++                        base_dds.subresources.assign(1, std::move(patched_bgra));
++                        base_dds.row_pitches.assign(1, base_dds.width * 4);
++                        base_dds.slice_pitches.assign(1, base_dds.width * base_dds.height * 4);
++                        const double pct = pstats.total_pixels ? (100.0 * pstats.patched_pixels / pstats.total_pixels) : 0.0;
++                        Logger::get().info("[TextureManager] Partial overlay patch applied over DDS for 0x" + format_hash_hex(hash) +
++                                           " (" + partial_patch->name + ", patched=" + std::to_string(pstats.patched_pixels) +
++                                           "/" + std::to_string(pstats.total_pixels) + " px [" + std::to_string(pct) + "%], png_bytes=" +
++                                           std::to_string(pstats.png_total_bytes) + ", untouched_verified=" +
++                                           std::to_string(pstats.untouched_verified_pixels) + ")");
++                        if (!create_d3d11_replacement_from_dds(device, hash, base_dds, original_levels,
++                                                               path_utf8(inject_path) + " + patch:" + partial_patch->name, details))
++                        {
++                            m_failed_injections.insert(hash);
++                            repl_failed = true;
++                        }
++                    }
++                    else if (!build_replacement11(device, hash, inject_path, original_levels, details))
++                    {
++                        m_failed_injections.insert(hash);
++                        repl_failed = true;
++                    }
++                }
++                else if (!build_replacement11(device, hash, inject_path, original_levels, details))
++                {
++                    m_failed_injections.insert(hash);
++                    repl_failed = true;
++                }
++            }
++            else if (partial_patch != nullptr)
++            {
++                if (!build_partial_patched11(device, hash, *partial_patch, pixel_data, width, height, format, pitch, original_levels, details))
++                {
++                    m_failed_injections.insert(hash);
++                    repl_failed = true;
++                }
++            }
+         }
+         else if (m_d3d11_replacements.find(hash) != m_d3d11_replacements.end())
+         {
+@@ -2393,6 +2670,7 @@ namespace TextureToolkit
+                 carry_replacement_fields(details, prev->second);
+         }
+ 
++        record_role_observation_locked(hash, width, height, repl_failed || (m_failed_injections.find(hash) != m_failed_injections.end()));
+         m_tracked_textures[hash] = details;
+ 
+         if (auto_dump)
+@@ -2423,109 +2701,149 @@ namespace TextureToolkit
+     // Builds the DX11 replacement for one hash and stores it in m_d3d11_replacements.
+     // original_levels is the original texture's MipLevels (0 = runtime-generated full chain).
+     // Caller MUST hold m_mutex. Returns true when a replacement was created.
+-    bool TextureManager::build_replacement11(ID3D11Device *device, uint64_t hash, const std::filesystem::path &inject_path, UINT original_levels, TextureDetails &details)
++    bool TextureManager::create_d3d11_replacement_from_dds(ID3D11Device *device, uint64_t hash, DDSImage &dds, UINT original_levels, const std::string &source_label, TextureDetails &details)
+     {
+-        if (device == nullptr)
++        if (device == nullptr || dds.subresources.empty())
+             return false;
+ 
+         bool created = false;
+         {
+-            DDSImage dds;
+-            if (load_dds(path_utf8(inject_path), dds) && !dds.subresources.empty())
+-            {
+-                // Single-level originals stay single-level; mipmapped originals
+-                // (or runtime-generated full chains, MipLevels == 0) get a full chain.
+-                uint32_t target_levels = choose_replacement_levels(dds, original_levels);
+-                std::vector<MipLevel> mips = build_replacement_mips(dds, target_levels);
++            // Single-level originals stay single-level; mipmapped originals
++            // (or runtime-generated full chains, MipLevels == 0) get a full chain.
++            uint32_t target_levels = choose_replacement_levels(dds, original_levels);
++            std::vector<MipLevel> mips = build_replacement_mips(dds, target_levels);
+ 
+-                if (mips.empty())
++            if (mips.empty())
++            {
++                Logger::get().error("[TextureManager] Replacement for 0x" + format_hash_hex(hash) + " produced no usable mip levels.");
++            }
++            else
++            {
++                const size_t orig_effective_levels = (original_levels == 0)
++                    ? full_mip_count(details.width, details.height)
++                    : original_levels;
++                if (orig_effective_levels > 1 && mips.size() == 1)
+                 {
+-                    Logger::get().error("[TextureManager] Injected DDS 0x" + format_hash_hex(hash) + " produced no usable mip levels.");
++                    Logger::get().warn("[TextureManager] Injected DDS 0x" + format_hash_hex(hash) + " has a single mip level, replacing a texture that had " + std::to_string(orig_effective_levels) + ". Mips cannot be generated from block-compressed data, so it samples level 0 at every distance and will shimmer in motion. Re-export with mipmaps if that was not intended.");
+                 }
+-                else
+-                {
+-                    // See the D3D9 path: compare against the original's real level count.
+-                    // original_levels == 0 means the runtime generates a full chain.
+-                    const size_t orig_effective_levels = (original_levels == 0)
+-                        ? full_mip_count(details.width, details.height)
+-                        : original_levels;
+-                    // Only the single-level case is worth a warning. A shorter chain that the
+-                    // author actually authored is a choice, and is applied without comment.
+-                    if (orig_effective_levels > 1 && mips.size() == 1)
+-                    {
+-                        Logger::get().warn("[TextureManager] Injected DDS 0x" + format_hash_hex(hash) + " has a single mip level, replacing a texture that had " + std::to_string(orig_effective_levels) + ". Mips cannot be generated from block-compressed data, so it samples level 0 at every distance and will shimmer in motion. Re-export with mipmaps if that was not intended.");
+-                    }
+ 
+-                    // Use a concrete (non-TYPELESS) format so the SRV is valid.
+-                    DXGI_FORMAT view_fmt = dxgi_concrete_format(static_cast<DXGI_FORMAT>(dds.format));
+-
+-                    D3D11_TEXTURE2D_DESC desc = {};
+-                    desc.Width = dds.width;
+-                    desc.Height = dds.height;
+-                    desc.MipLevels = static_cast<UINT>(mips.size());
+-                    desc.ArraySize = 1;
+-                    desc.Format = view_fmt;
+-                    desc.SampleDesc.Count = 1;
+-                    desc.SampleDesc.Quality = 0;
+-                    desc.Usage = D3D11_USAGE_DEFAULT;
+-                    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+-                    desc.CPUAccessFlags = 0;
+-                    desc.MiscFlags = 0;
+-
+-                    std::vector<D3D11_SUBRESOURCE_DATA> subres_data(mips.size());
+-                    for (size_t i = 0; i < mips.size(); ++i)
+-                    {
+-                        subres_data[i].pSysMem = mips[i].ptr;
+-                        subres_data[i].SysMemPitch = mips[i].row_pitch;
+-                        subres_data[i].SysMemSlicePitch = mips[i].slice_pitch;
+-                    }
++                // Use a concrete (non-TYPELESS) format so the SRV is valid.
++                DXGI_FORMAT view_fmt = dxgi_concrete_format(static_cast<DXGI_FORMAT>(dds.format));
++
++                D3D11_TEXTURE2D_DESC desc = {};
++                desc.Width = dds.width;
++                desc.Height = dds.height;
++                desc.MipLevels = static_cast<UINT>(mips.size());
++                desc.ArraySize = 1;
++                desc.Format = view_fmt;
++                desc.SampleDesc.Count = 1;
++                desc.SampleDesc.Quality = 0;
++                desc.Usage = D3D11_USAGE_DEFAULT;
++                desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
++                desc.CPUAccessFlags = 0;
++                desc.MiscFlags = 0;
++
++                std::vector<D3D11_SUBRESOURCE_DATA> subres_data(mips.size());
++                for (size_t i = 0; i < mips.size(); ++i)
++                {
++                    subres_data[i].pSysMem = mips[i].ptr;
++                    subres_data[i].SysMemPitch = mips[i].row_pitch;
++                    subres_data[i].SysMemSlicePitch = mips[i].slice_pitch;
++                }
+ 
+-                    ID3D11Texture2D *highres_tex = nullptr;
+-                    ScopedFlag no_reentry(D3D11Hook::s_inside_injection);
+-                    HRESULT hr = device->CreateTexture2D(&desc, subres_data.data(), &highres_tex);
+-                    if (SUCCEEDED(hr) && highres_tex != nullptr)
+-                    {
+-                        ID3D11ShaderResourceView *highres_srv = nullptr;
+-                        D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+-                        srv_desc.Format = desc.Format;
+-                        srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+-                        srv_desc.Texture2D.MostDetailedMip = 0;
+-                        srv_desc.Texture2D.MipLevels = desc.MipLevels;
++                ID3D11Texture2D *highres_tex = nullptr;
++                ScopedFlag no_reentry(D3D11Hook::s_inside_injection);
++                HRESULT hr = device->CreateTexture2D(&desc, subres_data.data(), &highres_tex);
++                if (SUCCEEDED(hr) && highres_tex != nullptr)
++                {
++                    ID3D11ShaderResourceView *highres_srv = nullptr;
++                    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
++                    srv_desc.Format = desc.Format;
++                    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
++                    srv_desc.Texture2D.MostDetailedMip = 0;
++                    srv_desc.Texture2D.MipLevels = desc.MipLevels;
+ 
+-                        hr = device->CreateShaderResourceView(highres_tex, &srv_desc, &highres_srv);
+-                        highres_tex->Release(); // SRV holds the texture reference
++                    hr = device->CreateShaderResourceView(highres_tex, &srv_desc, &highres_srv);
++                    highres_tex->Release(); // SRV holds the texture reference
+ 
+-                        if (SUCCEEDED(hr) && highres_srv != nullptr)
+-                        {
+-                            // Keep our reference (released in release_replacements).
+-                            m_d3d11_replacements[hash] = highres_srv;
+-                            m_bind_generation.fetch_add(1, std::memory_order_relaxed);
+-
+-                            details.status = TextureStatus::INJECTED;
+-                            details.filepath_injected = path_utf8(inject_path);
+-                            details.replacement_handle = reinterpret_cast<uint64_t>(highres_srv);
+-                            details.repl_width = dds.width;
+-                            details.repl_height = dds.height;
+-                            created = true;
+-
+-                            Logger::get().info("[TextureManager] Loaded DX11 replacement for 0x" + format_hash_hex(hash) + " (" + std::to_string(dds.width) + "x" + std::to_string(dds.height) + ", " + std::to_string(mips.size()) + " mips, original had " + std::to_string(original_levels) + ")");
+-                        }
+-                    }
+-                    else
++                    if (SUCCEEDED(hr) && highres_srv != nullptr)
+                     {
+-                        Logger::get().error("[TextureManager] Failed to create DX11 replacement texture for 0x" + format_hash_hex(hash) + ", HRESULT: " + std::to_string(hr));
++                        // Keep our reference (released in release_replacements).
++                        m_d3d11_replacements[hash] = highres_srv;
++                        m_bind_generation.fetch_add(1, std::memory_order_relaxed);
++
++                        details.status = TextureStatus::INJECTED;
++                        details.filepath_injected = source_label;
++                        details.replacement_handle = reinterpret_cast<uint64_t>(highres_srv);
++                        details.repl_width = dds.width;
++                        details.repl_height = dds.height;
++                        created = true;
++
++                        Logger::get().info("[TextureManager] Loaded DX11 replacement for 0x" + format_hash_hex(hash) + " (" + std::to_string(dds.width) + "x" + std::to_string(dds.height) + ", " + std::to_string(mips.size()) + " mips, original had " + std::to_string(original_levels) + ") src=" + source_label);
+                     }
+                 }
+-            }
+-            else
+-            {
+-                Logger::get().error("[TextureManager] Failed to load injected DDS file " + path_utf8(inject_path) +
+-                                    (dds.load_error.empty() ? "" : " - " + dds.load_error));
++                else
++                {
++                    Logger::get().error("[TextureManager] Failed to create DX11 replacement texture for 0x" + format_hash_hex(hash) + ", HRESULT: " + std::to_string(hr));
++                }
+             }
+         }
+         return created;
+     }
+ 
++    bool TextureManager::build_partial_patched11(ID3D11Device *device, uint64_t hash, const PartialPatchSpec &spec, const void *src_pixels, UINT width, UINT height, DXGI_FORMAT src_format, UINT src_pitch, UINT original_levels, TextureDetails &details)
++    {
++        if (device == nullptr || src_pixels == nullptr)
++            return false;
++        std::vector<uint8_t> patched_bgra;
++        PartialPatchStats pstats{};
++        std::string err;
++        if (!PartialPatchSet::apply_to_pixels(spec, src_pixels, src_pitch, src_format, width, height, patched_bgra, pstats, err))
++        {
++            Logger::get().error("[TextureManager] Partial patch failed for 0x" + format_hash_hex(hash) + " (" + spec.name + "): " + err);
++            return false;
++        }
++        DDSImage dds;
++        dds.width = width;
++        dds.height = height;
++        dds.depth = 1;
++        dds.mip_levels = 1;
++        dds.array_size = 1;
++        dds.format = reshade::api::format::b8g8r8a8_unorm;
++        dds.row_pitches.push_back(width * 4);
++        dds.slice_pitches.push_back(width * height * 4);
++        dds.subresources.push_back(std::move(patched_bgra));
++
++        const double pct = pstats.total_pixels ? (100.0 * pstats.patched_pixels / pstats.total_pixels) : 0.0;
++        const std::string label = "patch:" + spec.name;
++        const bool ok = create_d3d11_replacement_from_dds(device, hash, dds, original_levels, label, details);
++        if (ok)
++        {
++            Logger::get().info("[TextureManager] Partial patch applied for 0x" + format_hash_hex(hash) +
++                               " (" + spec.name + ", " + std::to_string(width) + "x" + std::to_string(height) +
++                               ", rects=" + std::to_string(spec.rects.size()) +
++                               ", patched=" + std::to_string(pstats.patched_pixels) + "/" + std::to_string(pstats.total_pixels) +
++                               " px [" + std::to_string(pct) + "%], png_bytes=" + std::to_string(pstats.png_total_bytes) +
++                               ", untouched_verified=" + std::to_string(pstats.untouched_verified_pixels) + ")");
++        }
++        return ok;
++    }
++
++    bool TextureManager::build_replacement11(ID3D11Device *device, uint64_t hash, const std::filesystem::path &inject_path, UINT original_levels, TextureDetails &details)
++    {
++        if (device == nullptr)
++            return false;
++
++        DDSImage dds;
++        if (!load_dds(path_utf8(inject_path), dds) || dds.subresources.empty())
++        {
++            Logger::get().error("[TextureManager] Failed to load injected DDS file " + path_utf8(inject_path) +
++                                (dds.load_error.empty() ? "" : " - " + dds.load_error));
++            return false;
++        }
++        return create_d3d11_replacement_from_dds(device, hash, dds, original_levels, path_utf8(inject_path), details);
++    }
++
+     // Tracking already skips textures under 16 while the switch is on; this also drops the ones
+     // tracked before it was switched on. 16 x 16 itself is only hidden from the list, never
+     // untracked, so a mod that replaces one keeps working (Spec Ops: The Line has hundreds of
+diff --git a/src/TextureManager.h b/src/TextureManager.h
+index 5f6814c..8980ae2 100644
+--- a/src/TextureManager.h
++++ b/src/TextureManager.h
+@@ -8,14 +8,19 @@
+ #include <unordered_map>
+ #include <unordered_set>
+ #include <mutex>
++#include <set>
+ #include <filesystem>
+ #include <atomic>
+ #include <thread>
+ #include <condition_variable>
+ #include "TextureHash.h"
++#include "RoleManifest.h"
++#include "PartialPatch.h"
+ 
+ namespace TextureToolkit
+ {
++    struct DDSImage;
++
+     enum class TextureStatus
+     {
+         ORIGINAL = 0,
+@@ -89,6 +94,7 @@ namespace TextureToolkit
+         // Settings
+         bool auto_dump = false;
+         bool enable_injection = true;
++        bool production_mode = true;
+         bool filter_small_textures = true;
+         bool show_current_frame_only = false;
+         bool accept_sk_names = true;   // also resolve Special K-named files in inject/
+@@ -183,6 +189,12 @@ namespace TextureToolkit
+         // Special K-named file is loaded. Readable from any thread.
+         bool wants_sk_hash() const { return accept_sk_names && m_have_sk_files.load(std::memory_order_relaxed); }
+ 
++        // In production mode (when AutoDump is off), restrict upload tracking/hashing to dimensions
++        // matching loaded replacement DDS files and skip dynamic font-cache / transient uploads.
++        bool is_production_skip_mode() const { return production_mode && !auto_dump; }
++        bool should_process_texture_upload(UINT width, UINT height) const;
++        void note_production_skipped_upload() const { m_production_skipped_uploads.fetch_add(1, std::memory_order_relaxed); }
++
+         // Copies our content-hash tag from one D3D9 texture to another. Used when the game
+         // copies a tagged SYSTEMMEM texture into the DEFAULT texture it actually renders, so
+         // the bound texture becomes tracked, previewable and injectable.
+@@ -288,6 +300,10 @@ namespace TextureToolkit
+         // no such file present the Special K hash cannot match anything, and computing it means a
+         // second full pass over every texture the game uploads.
+         std::atomic<bool> m_have_sk_files{false};
++        mutable std::mutex m_dims_mutex;
++        std::vector<uint64_t> m_injected_dims;
++        bool m_injected_dim_filter_ready = false;
++        mutable std::atomic<uint64_t> m_production_skipped_uploads{0};
+         std::unordered_map<uint64_t, TextureDetails> m_tracked_textures;
+ 
+         // Replacement maps are keyed by content hash, not by raw resource pointer.
+@@ -312,6 +328,8 @@ namespace TextureToolkit
+         // re-uploaded, so hot reload has to build it after the fact). Both require m_mutex.
+         bool build_replacement9(IDirect3DDevice9 *device, uint64_t hash, const std::filesystem::path &inject_path, UINT original_levels, TextureDetails &details);
+         bool build_replacement11(ID3D11Device *device, uint64_t hash, const std::filesystem::path &inject_path, UINT original_levels, TextureDetails &details);
++        bool create_d3d11_replacement_from_dds(ID3D11Device *device, uint64_t hash, DDSImage &dds, UINT original_levels, const std::string &source_label, TextureDetails &details);
++        bool build_partial_patched11(ID3D11Device *device, uint64_t hash, const PartialPatchSpec &spec, const void *src_pixels, UINT width, UINT height, DXGI_FORMAT src_format, UINT src_pitch, UINT original_levels, TextureDetails &details);
+ 
+         // Hot reload. The bind hooks only FLAG a hash (note_pending_injection, cheap, runs inside
+         // the game's draw call); the actual DDS read and texture creation happen in on_frame via
+@@ -407,5 +425,22 @@ namespace TextureToolkit
+         // K's 8-hex top-CRC name, whichever comes from the higher source in the load order (ours
+         // when both are in the same folder). via_sk_name reports which naming matched.
+         std::filesystem::path find_injection_path(uint64_t hash, uint32_t sk_hash = 0, bool *via_sk_name = nullptr);
++
++        // R2 multi-hash role manifest & runtime profile classification
++        RoleManifest m_role_manifest;
++        std::filesystem::path m_manifest_path;
++        std::filesystem::path m_profile_status_path;
++        std::set<std::string> m_matched_vanilla_roles;
++        std::set<std::string> m_matched_legacy_roles;
++        std::set<std::string> m_matched_shared_roles;
++        std::set<std::string> m_failed_roles;
++        std::set<std::string> m_unknown_watched_hashes;
++        bool m_profile_dirty = false;
++        uint64_t m_next_profile_flush_ticks = 0;
++
++        void record_role_observation_locked(uint64_t hash, UINT width, UINT height, bool failed);
++        void flush_profile_status_locked(bool force);
++
++        PartialPatchSet m_partial_patches;
+     };
+ }
+diff --git a/src/TextureToolkitUI.cpp b/src/TextureToolkitUI.cpp
+index 52e02e8..c898fd7 100644
+--- a/src/TextureToolkitUI.cpp
++++ b/src/TextureToolkitUI.cpp
+@@ -368,6 +368,7 @@ namespace TextureToolkit
+         Configuration &cfg = ConfigManager::get().get_config();
+         cfg.enable_injection = tm.enable_injection;
+         cfg.auto_dump = tm.auto_dump;
++        cfg.production_mode = tm.production_mode;
+         cfg.filter_small_textures = tm.filter_small_textures;
+         cfg.show_current_frame_only = tm.show_current_frame_only;
+         cfg.accept_sk_names = tm.accept_sk_names;

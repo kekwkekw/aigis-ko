@@ -1,12 +1,12 @@
 {
   "version": "0.1.0",
   "archive": "AigisKR-0.1.0.zip",
-  "archive_bytes": 126202114,
-  "archive_sha256": "7720fe3710ba8ebc88a63d744b9d41fd798db77d7d8dea404c0b619532fc38d2",
+  "archive_bytes": 126214929,
+  "archive_sha256": "71cc51d2524d81343d09d7668071bd9eedbc8da94a966ad239458837a383e15e",
   "sources_archive": "AigisKR-0.1.0-sources.zip",
-  "sources_archive_bytes": 30678303,
-  "sources_archive_sha256": "fca1158861d7050c0815324791a82e4e97f8929197171cc52408e221dfc28608",
-  "file_count": 132,
+  "sources_archive_bytes": 30959557,
+  "sources_archive_sha256": "7d4eee1cd68c5503a24b8dc658abcd18da5c9c48f468195ebfaa872af3f66006",
+  "file_count": 133,
   "files": [
     {
       "path": "AigisKR_Diagnostics.cmd",
@@ -15,8 +15,13 @@
     },
     {
       "path": "KNOWN_LIMITATIONS.md",
-      "bytes": 3237,
-      "sha256": "aea87af683b8c9e8a0adbb0df482206124d62771605717cafdb4d9b90e7e62a9"
+      "bytes": 3498,
+      "sha256": "93ce30de7b2789837e7541398cf6406b9b94d9dae26dff98fa4cb67d356df2ad"
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 34523,
+      "sha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
     },
     {
       "path": "LICENSES/AigisKR-HdTransHost-AGPL-3.0.txt",
@@ -35,8 +40,8 @@
     },
     {
       "path": "LICENSES/MinHook-BSD-2-Clause.txt",
-      "bytes": 4446,
-      "sha256": "4f21f857550d7be854da6ea5f2da4e6775ca4e3fbb535e4f3d961c47d0bf3335"
+      "bytes": 4362,
+      "sha256": "2bfff5fa29fc5d1cb2745acfaad9d930e983f5c8dd97e0ec5735d9199cf8f416"
     },
     {
       "path": "LICENSES/SafetyHook-BSL-1.0.txt",
@@ -75,8 +80,8 @@
     },
     {
       "path": "LICENSES/hdTrans/SOURCE.txt",
-      "bytes": 2088,
-      "sha256": "d798b5fdb7acf578808a844bb405714af2db690e05acc9a4d23ae11fb25379b5"
+      "bytes": 2167,
+      "sha256": "320933e5aaff200ddcddb3e0132c00bd611fb9ec68246a642db4cd43e74606be"
     },
     {
       "path": "LICENSES/hdTrans/THIRD-PARTY-NOTICES.txt",
@@ -85,18 +90,18 @@
     },
     {
       "path": "README_KO.md",
-      "bytes": 5965,
-      "sha256": "16611741b76740a7290d57c779ce5a6afd4f8cddfbcfb62ef96ee8b6a24f3491"
+      "bytes": 6862,
+      "sha256": "945557936d00c4a6541702a1f6997c9502e2e77197b03eebe5e4494817cf00cc"
     },
     {
       "path": "RELEASE_NOTES_KO.md",
-      "bytes": 1879,
-      "sha256": "1e1b8dead86b52517f038d6acac087b224e2ec558becc1bd16d96d920d17f1dd"
+      "bytes": 2054,
+      "sha256": "dc42891babc1bd9a81a9e68f42f73a3527d370ba5ec16783275fb57104518767"
     },
     {
       "path": "THIRD_PARTY_NOTICES.md",
-      "bytes": 5644,
-      "sha256": "d413b1cf9b44599ba6658b4d9175d19cf863c5880594a1f01a6ef8055ad04786"
+      "bytes": 5890,
+      "sha256": "c8a2e98df68bd41025bd27111eca8f80f4886d5c6f9606feb86d225adfb8c5aa"
     },
     {
       "path": "TT/inject/0C0DC3D45E42DD74.dds",
@@ -575,8 +580,8 @@
     },
     {
       "path": "scripts/AigisKR/diagnostics.ps1",
-      "bytes": 9158,
-      "sha256": "b1eb7c7bc0978cbad93dd543166457bcb1695147b24e22f68e200dde6198681b"
+      "bytes": 9153,
+      "sha256": "867aede73faae1a3fb75e8932f542cf44254d2712829b1caa39966bde51a24e8"
     },
     {
       "path": "scripts/AigisKR/hdtrans/J2KEngine.dll",

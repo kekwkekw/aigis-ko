@@ -28,4 +28,4 @@ Extracted Bundled Binary & Dictionary Hashes (SHA-256):
   89b623e11a33711d0ccc65e9a368e6bdd286629ae9140b988937a74f773dbcf4
 
 Corresponding Source Availability:
-Complete corresponding source code for AigisKR.HdTransHost (tools/hdtrans_host/) and the pinned upstream hdTrans v0.9.5 snapshot (commit acd67a792a99ac5da3d6622d4d3dd203e957acd1), together with CMake build instructions and license files, is bundled in the companion release archive AigisKR-0.1.0-rc.2-sources.zip.
+Complete corresponding source code for AigisKR (CMakeLists.txt, src/, tools/hdtrans_host/, tests/, packaging/) and the pinned upstream hdTrans v0.9.5 snapshot (commit acd67a792a99ac5da3d6622d4d3dd203e957acd1), together with CMake build instructions and license files, is bundled in the companion release archive AigisKR-0.1.0-sources.zip and published at https://github.com/kekwkekw/aigis-ko.

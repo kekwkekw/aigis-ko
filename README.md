@@ -9,6 +9,7 @@
 - Windows 네이티브 x86 클라이언트 `Aigis_r.exe`. 검수한 게임 버전은 **5.1.0**입니다.
 - 순정 게임 리소스를 기준으로 검수했습니다. 이전 유니코드 패치나 다른 모드와 섞인 환경의 완전 호환은 검증하지 않았습니다.
 - 번역 엔진 `hdTrans v0.9.5`를 포함합니다. 기본 사용에 별도 번역 프로그램이나 API 키가 필요하지 않습니다.
+- 오프라인 번역 엔진(`J2KEngine.dll`) 호환성을 위해 게임 설치 경로는 영문/ASCII 폴더 경로를 권장합니다.
 
 ## 설치
 
@@ -24,12 +25,16 @@
   Aigis_r.exe                  기존 게임 파일
   winmm.dll                    패치 로더
   AigisKR_Diagnostics.cmd      문제 확인용 도구
+  LICENSE / README_KO.md / KNOWN_LIMITATIONS.md / RELEASE_NOTES_KO.md / THIRD_PARTY_NOTICES.md
+  LICENSES/                    서드파티 및 AGPL 라이선스 고지
   scripts/
+    global.ini
     AigisKR.asi
     AigisKR.ini
     TextureToolkit-x86.asi
     TextureToolkit.ini
     AigisKR/
+      diagnostics.ps1
       bin/AigisKR.HdTransHost.exe
       hdtrans/
       data/
@@ -61,7 +66,15 @@ HdTransPath=
 - `Enabled=0`: 자동번역을 끕니다. 수동 검수 번역·폰트·이미지 패치는 유지합니다.
 - `LiveTextRefresh=0`: 번역 결과를 다음 정상 텍스트 갱신에 적용합니다.
 - 외부 hdTrans를 사용하려면 `HdTransPath`에 설치 폴더를 지정합니다. 기본 `Auto`는 유효한 외부 경로를 우선 사용하고 실패하면 번들을 사용합니다.
-- 사용자 번역 수정은 `scripts/AigisKR/data/overrides.json`으로 관리할 수 있습니다.
+- 사용자 번역 수정은 `scripts/AigisKR/data/overrides.json` 파일을 만들어 관리할 수 있습니다(UTF-8 JSON):
+
+```json
+{
+  "exact": {
+    "原文テキスト": "원하는 한국어 번역"
+  }
+}
+```
 
 ## 번역 범위
 
@@ -83,10 +96,10 @@ HdTransPath=
 
 ## 라이선스와 대응 소스
 
-Copyright (c) 2026 kekwkekw. 이 저장소의 자체 코드·도구·독자 작성 번역 데이터는 **AGPL-3.0-only**로 제공합니다. [LICENSE](LICENSE)를 참고하세요. 게임 원문·고유 명칭 및 가공 UI 이미지의 원작 권리는 각 게임 권리자에게 있으며, 이 저장소의 오픈소스 라이선스로 재허가하지 않습니다.
+Copyright (c) 2026 kekwkekw. 이 저장소의 자체 코드·도구·독자 작성 번역 데이터는 **`AGPL-3.0-only`**로 제공합니다. [LICENSE](LICENSE)를 참고하세요. 게임 원문·고유 명칭 및 가공 UI 이미지의 원작 권리는 각 게임 권리자에게 있으며, 이 저장소의 오픈소스 라이선스로 재허가하지 않습니다.
 
-동반 배포한 **`AigisKR-0.1.0-sources.zip`**에는 번들 hdTrans와 별도 번역 호스트의 대응 소스 및 빌드 안내가 있습니다. 이 소스 ZIP은 게임 설치용 파일이 아닙니다.
+`AigisKR.asi`, `AigisKR.HdTransHost`, 번들 `hdTrans v0.9.5`의 전체 대응 소스 및 CMake 빌드 안내는 이 저장소(`CMakeLists.txt`, `src/`, `tools/hdtrans_host/`)와 동반 배포한 **`AigisKR-0.1.0-sources.zip`**에서 함께 제공합니다. `-sources.zip`은 게임 설치용 파일이 아닙니다.
 
-`hdTrans`와 `AigisKR.HdTransHost`는 AGPL-3.0-only 구성 요소이며, 그 밖의 외부 구성요소는 각각의 고유 라이선스를 따릅니다. 라이선스·고지·출처는 `LICENSES/` 및 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)에 있습니다. 폰트 파일은 배포하지 않으며 실행 시 Windows 시스템 폰트를 사용합니다.
+그 밖의 외부 구성요소는 각각의 고유 라이선스를 따릅니다. 라이선스·고지·출처는 `LICENSES/` 및 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)에 있습니다. 폰트 파일은 배포하지 않으며 실행 시 Windows 시스템 폰트를 사용합니다.
 
-패키지 버전은 **v0.1.0**입니다. rc.11에서 검증한 바이너리를 보존했으므로 진단 로그의 내부 구성 요소 버전은 ASI `0.1.0-rc.9`, 번역 호스트 `0.1.0-rc.2`로 표시될 수 있습니다.
+패키지 및 진단 스크립트 버전은 **v0.1.0**입니다. rc.11에서 검증한 실행 바이너리를 바이트 단위로 보존했으므로 내부 바이너리 로그 문자열은 ASI `0.1.0-rc.9`, 번역 호스트 `0.1.0-rc.2`로 표시될 수 있습니다.
