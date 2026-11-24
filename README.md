@@ -2,7 +2,7 @@
 
 천년전쟁 아이기스 R Windows판의 한국어 패치입니다. 주요 UI 이미지, 수동 검수 텍스트, 한글 폰트와 오프라인 자동번역을 제공합니다. 게임 실행 파일과 `.cache`를 직접 수정하지 않습니다.
 
-[정식 버전 다운로드](https://github.com/kekwkekw/aigiskr/releases/latest) · [변경 내역](RELEASE_NOTES_KO.md) · [알려진 제한 사항](KNOWN_LIMITATIONS.md)
+[정식 버전 다운로드](https://github.com/kekwkekw/aigis-ko/releases/latest) · [변경 내역](RELEASE_NOTES_KO.md) · [알려진 제한 사항](KNOWN_LIMITATIONS.md)
 
 ## 지원 환경
 
@@ -13,7 +13,7 @@
 ## 설치
 
 1. 게임을 완전히 종료합니다.
-2. [릴리스 페이지](https://github.com/kekwkekw/aigiskr/releases/latest)에서 **`AigisKR-0.1.0.zip`**을 받습니다. `-sources.zip`은 대응 소스이므로 게임 폴더에 설치하지 않습니다.
+2. [릴리스 페이지](https://github.com/kekwkekw/aigis-ko/releases/latest)에서 **`AigisKR-0.1.0.zip`**을 받습니다. `-sources.zip`은 대응 소스이므로 게임 폴더에 설치하지 않습니다.
 3. ZIP 내부의 파일·폴더를 **`Aigis_r.exe`가 있는 폴더**에 압축 해제합니다.
 4. 평소 사용하는 DMM 공식 실행 경로로 게임을 시작합니다.
 
@@ -77,7 +77,7 @@ HdTransPath=
 
 ## 문제 보고
 
-게임 폴더의 `AigisKR_Diagnostics.cmd`를 실행하면 `AigisKR_Support_*.zip`이 생성됩니다. 파일을 확인한 뒤 [이슈](https://github.com/kekwkekw/aigiskr/issues)에 증상과 진입 경로를 함께 첨부하세요.
+게임 폴더의 `AigisKR_Diagnostics.cmd`를 실행하면 `AigisKR_Support_*.zip`이 생성됩니다. 파일을 확인한 뒤 [이슈](https://github.com/kekwkekw/aigis-ko/issues)에 증상과 진입 경로를 함께 첨부하세요.
 
 지원 번들은 설정·파일 해시·상태·로그를 수집하며, 사용자 이름과 계정 식별자를 마스킹합니다. 게임 캐시·자동번역 캐시 본문·DMM 인증 정보·스크린샷은 수집하지 않습니다.
 
